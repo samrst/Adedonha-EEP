@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Adedonha Online — SENAI. Jogue com amigos em tempo real." />
+  <title>Adedonha SENAI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="root">
+
+  <!-- ══ TOPBAR ══ -->
+  <header class="topbar" role="banner">
+    <div>
+      <div class="logo" aria-label="SENAI">SEN<em>AI</em></div>
+      <div class="logo-sub">Serviço Nacional de Aprendizagem Industrial</div>
+    </div>
+    <div class="game-badge" aria-label="Adedonha">🎯 Adedonha</div>
+  </header>
+
+  <main id="main-content">
+
+    <!-- ══ PAGE: HOME ══ -->
+    <section class="page active" id="pg-home" aria-label="Tela inicial">
+      <div class="home-wrap">
+        <div class="text-center mt16">
+          <h1 class="home-title">Adedonha Online</h1>
+          <p class="muted mt8">Jogue com amigos em tempo real</p>
+        </div>
+
+        <article class="card mt20">
+          <div class="card-head">▶ Criar Nova Sala</div>
+          <div class="card-body">
+            <div class="field">
+              <label for="h-name">Seu nome</label>
+              <input id="h-name" type="text" maxlength="20" placeholder="Ex: João Silva" autocomplete="nickname" />
+            </div>
+            <div id="h-err" class="error-msg" role="alert"></div>
+            <button class="btn btn-red btn-lg btn-full" onclick="createRoom()">Criar Sala</button>
+          </div>
+        </article>
+
+        <article class="card mt16">
+          <div class="card-head red">🔗 Entrar em Sala Existente</div>
+          <div class="card-body">
+            <div class="field">
+              <label for="j-name">Seu nome</label>
+              <input id="j-name" type="text" maxlength="20" placeholder="Ex: Maria Costa" autocomplete="nickname" />
+            </div>
+            <div class="field">
+              <label for="j-code">Código da sala</label>
+              <input id="j-code" type="text" maxlength="6" placeholder="Ex: AB12CD" class="input-code" autocomplete="off" />
+            </div>
+            <div id="j-err" class="error-msg" role="alert"></div>
+            <button class="btn btn-blue btn-lg btn-full" onclick="joinRoom()">Entrar na Sala</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ══ PAGE: LOBBY ══ -->
+    <section class="page" id="pg-lobby" aria-label="Lobby da sala">
+      <div class="grid2">
+
+        <!-- Coluna esquerda -->
+        <div>
+          <article class="card">
+            <div class="card-head">🏠 Código da Sala</div>
+            <div class="card-body text-center">
+              <div class="room-code" id="lb-code" aria-label="Código da sala">------</div>
+              <p class="room-code-sub">Compartilhe com os jogadores</p>
+              <button class="btn btn-outline btn-sm" onclick="copyCode()">📋 Copiar código</button>
+            </div>
+          </article>
+
+          <!-- Config (somente host) -->
+          <article class="card mt16" id="lb-config-card">
+            <div class="card-head">⚙️ Configurações</div>
+            <div class="card-body">
+
+              <!-- Modo do host -->
+              <div class="field">
+                <label>Modo do host</label>
+                <div class="host-mode-toggle">
+                  <button class="host-mode-btn active" id="hm-player" onclick="setHostMode('player')">
+                    🎮 Jogar
+                  </button>
+                  <button class="host-mode-btn" id="hm-spectator" onclick="setHostMode('spectator')">
+                    👁️ Apenas assistir
+                  </button>
+                </div>
+                <p class="field-hint" id="hm-hint">Você vai jogar e também controlar a partida.</p>
+              </div>
+
+              <div class="field">
+                <label for="lb-time">Tempo por rodada</label>
+                <select id="lb-time">
+                  <option value="60">60 segundos</option>
+                  <option value="90" selected>90 segundos</option>
+                  <option value="120">120 segundos</option>
+                  <option value="180">180 segundos</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label for="lb-rounds">Número de rodadas</label>
+                <select id="lb-rounds">
+                  <option value="3">3 rodadas</option>
+                  <option value="5" selected>5 rodadas</option>
+                  <option value="7">7 rodadas</option>
+                  <option value="10">10 rodadas</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label>Categorias</label>
+                <div id="lb-cats" style="margin-bottom:8px"></div>
+                <div class="input-row">
+                  <input id="lb-cat-in" type="text" maxlength="25" placeholder="Nova categoria..." />
+                  <button class="btn btn-outline btn-sm" onclick="addCat()">+</button>
+                </div>
+                <div style="margin-top:6px">
+                  <button class="btn btn-sm btn-gray" onclick="resetCats()">↩ Padrão</button>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <!-- Info para convidado -->
+          <article class="card mt16" id="lb-guest-info" style="display:none">
+            <div class="card-head">ℹ️ Aguardando host</div>
+            <div class="card-body">
+              <p class="notice">O host está configurando a sala. Aguarde para iniciar.</p>
+            </div>
+          </article>
+        </div>
+
+        <!-- Coluna direita -->
+        <div>
+          <article class="card">
+            <div class="card-head">👥 Jogadores na Sala</div>
+            <div id="lb-players"></div>
+            <div class="card-body" style="border-top:1px solid var(--gray2)">
+              <p class="muted" id="lb-status">Aguardando jogadores...</p>
+            </div>
+          </article>
+
+          <div class="mt16 text-center" id="lb-start-wrap">
+            <button class="btn btn-red btn-lg" onclick="startGame()" id="lb-start-btn">▶ Iniciar Partida</button>
+            <p class="muted mt8">Mínimo 1 jogador para iniciar</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ══ PAGE: GAME ══ -->
+    <section class="page" id="pg-game" aria-label="Jogo em andamento">
+
+      <!-- Banner espectador -->
+      <div class="spectator-banner" id="spectator-banner" style="display:none">
+        <span>👁️ Modo espectador — você está assistindo esta rodada</span>
+      </div>
+
+      <div class="game-header">
+        <div>
+          <p class="muted">Letra</p>
+          <div class="big-letter" id="g-letter" aria-live="polite">A</div>
+        </div>
+        <div class="text-center">
+          <div class="timer-num" id="g-timer" aria-live="polite" aria-label="Tempo restante">90</div>
+          <p class="timer-label">segundos</p>
+          <div class="mt8">
+            <button class="btn btn-outline btn-sm" id="g-pause-btn" onclick="togglePause()">⏸ Pausar</button>
+          </div>
+        </div>
+        <div class="round-badge">
+          <p class="round-lbl">Rodada</p>
+          <div class="round-n" id="g-round">1/5</div>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table class="answers-table" id="g-table">
+          <thead id="g-thead"></thead>
+          <tbody id="g-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="stop-bar">
+        <button class="btn btn-red btn-lg" onclick="playerStop()" id="g-stop-btn">🛑 STOP!</button>
+        <p class="waiting-players" id="g-stop-status"></p>
+      </div>
+    </section>
+
+    <!-- ══ PAGE: SCORING ══ -->
+    <section class="page" id="pg-scoring" aria-label="Pontuação da rodada">
+      <div class="flex-between" style="margin-bottom:14px; flex-wrap:wrap; gap:10px">
+        <div>
+          <h2 class="section-title" id="sc-title">Pontuação — Letra A</h2>
+          <p class="muted">✓ válido (10 pts único / 5 pts igual) · ✗ inválido</p>
+        </div>
+        <div id="sc-host-badge"></div>
+      </div>
+      <div class="table-scroll">
+        <table class="answers-table" id="sc-table">
+          <thead id="sc-thead"></thead>
+          <tbody id="sc-tbody"></tbody>
+        </table>
+      </div>
+      <div class="stop-bar mt16">
+        <button class="btn btn-green btn-lg" id="sc-confirm-btn" onclick="confirmScoring()">✅ Confirmar Pontuação</button>
+        <p id="sc-wait-msg" class="notice" style="display:none">Aguardando host confirmar pontuação...</p>
+      </div>
+    </section>
+
+    <!-- ══ PAGE: ROUND METRICS ══ -->
+    <section class="page" id="pg-metrics" aria-label="Métricas da rodada">
+      <div class="text-center">
+        <h2 class="section-title" id="mt-title">Resultado da Rodada 1</h2>
+        <p class="muted" id="mt-sub">Sua performance</p>
+      </div>
+
+      <!-- Seletor de jogador (espectador vê todos) -->
+      <div id="mt-player-selector" style="display:none; margin:12px 0">
+        <div class="field" style="max-width:280px;margin:0 auto">
+          <label for="mt-player-select">Ver métricas de:</label>
+          <select id="mt-player-select" onchange="renderMetricsForPlayer(this.value)"></select>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card efc">
+          <div class="metric-icon" aria-hidden="true">🎯</div>
+          <p class="metric-label">Métrica</p>
+          <p class="metric-name">Eficácia</p>
+          <div class="metric-val" id="mt-eficacia">0%</div>
+          <p class="metric-desc">% de respostas válidas em relação às categorias disponíveis</p>
+          <div class="metric-bar-wrap"><div class="metric-bar" id="mt-eficacia-bar"></div></div>
+        </div>
+        <div class="metric-card efi">
+          <div class="metric-icon" aria-hidden="true">⚡</div>
+          <p class="metric-label">Métrica</p>
+          <p class="metric-name">Eficiência</p>
+          <div class="metric-val" id="mt-eficiencia">0%</div>
+          <p class="metric-desc">% de respostas únicas dentre as válidas (sem repetição)</p>
+          <div class="metric-bar-wrap"><div class="metric-bar" id="mt-eficiencia-bar"></div></div>
+        </div>
+        <div class="metric-card prd">
+          <div class="metric-icon" aria-hidden="true">📊</div>
+          <p class="metric-label">Métrica</p>
+          <p class="metric-name">Produtividade</p>
+          <div class="metric-val" id="mt-produtividade">0</div>
+          <p class="metric-desc">Pontuação total obtida nesta rodada</p>
+          <div class="metric-bar-wrap"><div class="metric-bar" id="mt-produtividade-bar"></div></div>
+        </div>
+      </div>
+
+      <article class="card">
+        <div class="card-head">📋 Detalhes da Rodada</div>
+        <div class="card-body" id="mt-details"></div>
+      </article>
+
+      <div class="text-center mt20" id="mt-next-wrap">
+        <button class="btn btn-blue btn-lg" id="mt-next-btn" onclick="goNextRound()">▶ Próxima Rodada</button>
+        <p class="muted mt8" id="mt-next-lbl"></p>
+      </div>
+    </section>
+
+    <!-- ══ PAGE: FINAL RESULTS ══ -->
+    <section class="page" id="pg-results" aria-label="Resultado final">
+      <div class="text-center">
+        <h2 class="results-title">🏆 Resultado Final</h2>
+        <p class="muted mt8" id="res-sub">Fim da partida</p>
+      </div>
+
+      <div class="podium mt16" id="res-podium" role="list"></div>
+
+      <article class="card mt16">
+        <div class="card-head">🏅 Ranking Geral — Pontuação Total</div>
+        <div class="table-scroll">
+          <table class="rank-table" id="res-rank"></table>
+        </div>
+      </article>
+
+      <div class="mt20">
+        <h3 class="triple-section-title">🎖️ Rankings por Métricas</h3>
+        <p class="muted" style="margin-bottom:12px">Média acumulada de todas as rodadas</p>
+        <div class="triple-rank" id="res-triple"></div>
+      </div>
+
+      <div class="text-center mt20" style="padding-bottom:28px">
+        <button class="btn btn-red btn-lg" onclick="playAgain()">🔄 Jogar Novamente</button>
+        <button class="btn btn-outline btn-lg" style="margin-left:12px; margin-top:8px" onclick="goHome()">🏠 Início</button>
+      </div>
+    </section>
+
+  </main>
+</div><!-- /#root -->
+
+<script src="game.js"></script>
+</body>
+</html>
