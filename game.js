@@ -1,21 +1,12 @@
 /* ============================================================
-   ADEDONHA SENAI — game.js  v2.0
+   ADEDONHA SENAI — game.js  v3.0
    Backend: Firebase Realtime Database (REST API, plano Spark)
-   Multiplayer real entre navegadores diferentes.
    ============================================================ */
 
 'use strict';
 
 // ══════════════════════════════════════════════════════════════
-//  FIREBASE CONFIG
-//  Substitua FIREBASE_URL pela URL do seu projeto Firebase.
-//  Formato: https://adedonha-eep-default-rtdb.firebaseio.com/
-//
-//  Como obter gratuitamente:
-//  1. Acesse https://console.firebase.google.com
-//  2. Crie um projeto → Realtime Database → Criar banco de dados
-//  3. Escolha "Iniciar no modo de teste" (regras abertas por 30d)
-//  4. Copie a URL e cole aqui embaixo
+//  FIREBASE CONFIG — substitua pela URL do seu projeto
 // ══════════════════════════════════════════════════════════════
 const FIREBASE_URL = 'https://adedonha-eep-default-rtdb.firebaseio.com/';
 
@@ -24,27 +15,27 @@ async function fbGet(path) {
   try {
     const r = await fetch(`${FIREBASE_URL}/${path}.json`);
     if (!r.ok) return null;
-    return await r.json();
+    return await r.json();          // retorna null se o nó não existe
   } catch { return null; }
 }
 
 async function fbSet(path, data) {
   try {
     const r = await fetch(`${FIREBASE_URL}/${path}.json`, {
-      method: 'PUT',
+      method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body:    JSON.stringify(data),
     });
     return r.ok;
   } catch { return false; }
 }
 
-async function fbUpdate(path, data) {
+async function fbPatch(path, data) {
   try {
     const r = await fetch(`${FIREBASE_URL}/${path}.json`, {
-      method: 'PATCH',
+      method:  'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body:    JSON.stringify(data),
     });
     return r.ok;
   } catch { return false; }
@@ -55,7 +46,7 @@ async function fbUpdate(path, data) {
 // ══════════════════════════════════════════════════════════════
 const ALPHABET = 'ABCDEFGHIJLMNOPRSTUVZ'.split('');
 const DEF_CATS = ['Nome', 'Animal', 'Cidade', 'Fruta', 'Cor', 'Profissão', 'Objeto'];
-const POLL_MS  = 2000;
+const POLL_MS  = 1500;   // poll mais rápido para responsividade
 
 // ══════════════════════════════════════════════════════════════
 //  ESTADO GLOBAL
@@ -74,7 +65,7 @@ let S = {
   currentLetter: '',
   usedLetters:   [],
 
-  answers:       {},
+  answers:       {},   // respostas locais do meu jogador (publicadas a cada digitação)
   scoring:       {},
   roundScores:   {},
   metrics:       {},
@@ -86,21 +77,27 @@ let S = {
 
   phase:         'lobby',
   pollId:        null,
+
+  // anti-duplo-disparo
+  _collecting:   false,
 };
 
+// ── Sentinelas de poll ──
 let _lastPhase       = '';
 let _lastRound       = -1;
 let _lastPlayerCount = 0;
 let _lastStoppedBy   = null;
+let _answerPushTimer = null;  // debounce para publicar respostas enquanto digita
 
 // ── Caminhos Firebase ──
-const roomPath    = () => `rooms/${S.roomCode}`;
-const answersPath = () => `rooms/${S.roomCode}/answers_r${S.currentRound}`;
-const scoringPath = () => `rooms/${S.roomCode}/scoring_r${S.currentRound}`;
+const roomPath      = () => `rooms/${S.roomCode}`;
+const myAnswerPath  = () => `rooms/${S.roomCode}/live_answers/${S.currentRound}/${S.myId}`;
+const allAnswerPath = () => `rooms/${S.roomCode}/live_answers/${S.currentRound}`;
+const scoringPath   = () => `rooms/${S.roomCode}/scoring_r${S.currentRound}`;
 
-// ── Helpers DOM ──
-function uid()         { return Math.random().toString(36).slice(2, 10); }
-function el(id)        { return document.getElementById(id); }
+// ── DOM helpers ──
+function uid()            { return Math.random().toString(36).slice(2, 10); }
+function el(id)           { return document.getElementById(id); }
 function showErr(id, msg) { const e = el(id); e.style.display = 'block'; e.textContent = msg; }
 function hideErr(id)      { const e = el(id); if (e) e.style.display = 'none'; }
 
@@ -114,42 +111,37 @@ function showPage(id) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  HOME — criar / entrar em sala
+//  HOME
 // ══════════════════════════════════════════════════════════════
 async function createRoom() {
   const name = el('h-name').value.trim();
   if (!name) { showErr('h-err', 'Digite seu nome.'); return; }
   hideErr('h-err');
 
-  // UI feedback
   const btn = el('h-name').closest('.card-body').querySelector('button');
-  btn.disabled = true;
-  btn.textContent = 'Criando sala...';
+  btn.disabled = true; btn.textContent = 'Criando sala...';
 
-  S.myName      = name;
-  S.myId        = uid();
-  S.isHost      = true;
-  S.isSpectator = false;
-  S.roomCode    = genCode();
-  S.config      = { time: 90, rounds: 5, cats: [...DEF_CATS] };
-  S.players     = {};
-  S.players[S.myId] = { id: S.myId, name, host: true, spectator: false };
-  S.usedLetters = [];
-  S.roundScores = {};
-  S.metrics     = {};
+  S.myName       = name;
+  S.myId         = uid();
+  S.isHost       = true;
+  S.isSpectator  = false;
+  S.roomCode     = genCode();
+  S.config       = { time: 90, rounds: 5, cats: [...DEF_CATS] };
+  S.players      = { [S.myId]: { id: S.myId, name, host: true, spectator: false } };
+  S.usedLetters  = [];
+  S.roundScores  = {};
+  S.metrics      = {};
   S.currentRound = 0;
-  S.phase       = 'lobby';
-  S.stoppedBy   = null;
+  S.phase        = 'lobby';
+  S.stoppedBy    = null;
 
   const ok = await pushRoom();
-  btn.disabled = false;
-  btn.textContent = 'Criar Sala';
+  btn.disabled = false; btn.textContent = 'Criar Sala';
 
   if (!ok) {
-    showErr('h-err', '❌ Erro ao conectar ao servidor. Verifique a URL do Firebase no game.js.');
+    showErr('h-err', '❌ Erro ao conectar. Verifique a URL do Firebase em game.js.');
     return;
   }
-
   startPoll();
   showLobby();
 }
@@ -162,21 +154,13 @@ async function joinRoom() {
   hideErr('j-err');
 
   const btn = el('j-name').closest('.card-body').querySelector('button');
-  btn.disabled = true;
-  btn.textContent = 'Entrando...';
+  btn.disabled = true; btn.textContent = 'Entrando...';
 
   const room = await fbGet(`rooms/${code}`);
-  btn.disabled = false;
-  btn.textContent = 'Entrar na Sala';
+  btn.disabled = false; btn.textContent = 'Entrar na Sala';
 
-  if (!room) {
-    showErr('j-err', '❌ Sala não encontrada. Verifique o código.');
-    return;
-  }
-  if (room.phase === 'results') {
-    showErr('j-err', 'Esta partida já terminou.');
-    return;
-  }
+  if (!room)                   { showErr('j-err', '❌ Sala não encontrada. Verifique o código.'); return; }
+  if (room.phase === 'results'){ showErr('j-err', 'Esta partida já terminou.'); return; }
 
   S.myName        = name;
   S.myId          = uid();
@@ -194,11 +178,19 @@ async function joinRoom() {
   S.stoppedBy     = room.stoppedBy     || null;
   S.players[S.myId] = { id: S.myId, name, host: false, spectator: false };
 
-  await fbUpdate(`rooms/${code}/players`, { [S.myId]: S.players[S.myId] });
+  // Registra apenas o próprio jogador (sem sobrescrever o resto)
+  await fbPatch(`rooms/${code}/players`, { [S.myId]: S.players[S.myId] });
+
+  // Sincroniza sentinelas para não reagir à fase atual como "nova"
+  _lastPhase = S.phase;
+  _lastRound = S.currentRound;
+  _lastStoppedBy = S.stoppedBy;
+
   startPoll();
 
   if      (S.phase === 'game')    { showGamePage(); startTimer(); }
   else if (S.phase === 'scoring') { await loadRemoteAnswers(); showScoringPage(); }
+  else if (S.phase === 'metrics') { showMetricsPage(); }
   else                            { showLobby(); }
 }
 
@@ -210,10 +202,10 @@ function genCode() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  PUSH / POLL
+//  PUSH — escreve apenas metadados da sala (não as respostas)
 // ══════════════════════════════════════════════════════════════
 async function pushRoom() {
-  return await fbSet(roomPath(), {
+  return fbSet(roomPath(), {
     roomCode:      S.roomCode,
     players:       S.players,
     config:        S.config,
@@ -224,9 +216,44 @@ async function pushRoom() {
     currentLetter: S.currentLetter,
     phase:         S.phase,
     stoppedBy:     S.stoppedBy,
+    startedAt:     S.startedAt || null,
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+//  RESPOSTAS — cada jogador publica apenas as próprias
+// ══════════════════════════════════════════════════════════════
+function scheduleAnswerPush() {
+  // debounce: publica 600ms depois de parar de digitar
+  if (_answerPushTimer) clearTimeout(_answerPushTimer);
+  _answerPushTimer = setTimeout(pushMyAnswers, 600);
+}
+
+async function pushMyAnswers() {
+  if (S.isSpectator || S.phase !== 'game') return;
+  const myAnswers = (S.answers[S.myId]) || {};
+  await fbSet(myAnswerPath(), myAnswers);
+}
+
+async function loadAllAnswers() {
+  const all = await fbGet(allAnswerPath());
+  if (all) {
+    // Mescla: mantém dados locais do próprio jogador, pega o resto do Firebase
+    Object.keys(all).forEach(pid => {
+      if (pid !== S.myId) S.answers[pid] = all[pid];
+    });
+  }
+}
+
+async function loadRemoteAnswers() {
+  const all = await fbGet(allAnswerPath());
+  if (all) S.answers = all;
+  initScoring();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  POLL — 1.5s, leve e sem sobrescrever estado local
+// ══════════════════════════════════════════════════════════════
 function startPoll() {
   if (S.pollId) clearInterval(S.pollId);
   S.pollId = setInterval(pollRoom, POLL_MS);
@@ -236,8 +263,10 @@ async function pollRoom() {
   const room = await fbGet(roomPath());
   if (!room) return;
 
+  // Sempre sincroniza jogadores
   S.players = room.players || {};
 
+  // Convidados seguem config do host
   if (!S.isHost) {
     S.config      = room.config      || S.config;
     S.usedLetters = room.usedLetters || S.usedLetters;
@@ -249,38 +278,57 @@ async function pollRoom() {
   const rr     = room.currentRound;
   const pCount = Object.keys(S.players).length;
 
-  // Transições de fase
+  // ── Atualiza respostas na tela de jogo (todos os jogadores) ──
+  if (S.phase === 'game') {
+    await loadAllAnswers();
+    updateOtherAnswersUI();
+  }
+
+  // ── Detecta mudança de fase / rodada ──
   if (rp !== _lastPhase || rr !== _lastRound) {
     _lastPhase = rp;
     _lastRound = rr;
+
     if (!S.isHost) {
       S.phase         = rp;
       S.currentRound  = rr;
       S.currentLetter = room.currentLetter || '';
-      S.stoppedBy     = room.stoppedBy;
-      if      (rp === 'game')    { showGamePage(); if (!S.timer) startTimer(); }
+      S.stoppedBy     = room.stoppedBy || null;
+      _lastStoppedBy  = S.stoppedBy;
+
+      if      (rp === 'game')    { showGamePage(); if (!S.timer) startTimerFromServer(room); }
       else if (rp === 'scoring') { stopTimerLocal(); await loadRemoteAnswers(); showScoringPage(); }
       else if (rp === 'metrics') { S.metrics = room.metrics || {}; showMetricsPage(); }
       else if (rp === 'results') { S.metrics = room.metrics || {}; S.roundScores = room.roundScores || {}; showResultsPage(); }
-      else if (rp === 'lobby')   { showLobby(); }
+      else if (rp === 'lobby')   { resetLocalRoundState(); showLobby(); }
     }
   }
 
-  // Atualiza lista de jogadores no lobby
+  // ── Lobby: atualiza lista de jogadores ──
   if (pCount !== _lastPlayerCount) {
     _lastPlayerCount = pCount;
-    renderLobbyPlayers();
+    const ap = document.querySelector('.page.active');
+    if (ap && ap.id === 'pg-lobby') renderLobbyPlayers();
   }
-  const activePg = document.querySelector('.page.active');
-  if (activePg && activePg.id === 'pg-lobby') renderLobbyPlayers();
+  const ap = document.querySelector('.page.active');
+  if (ap && ap.id === 'pg-lobby') renderLobbyPlayers();
 
-  // Alguém apertou STOP
+  // ── STOP disparado por outro jogador ──
   const remStopped = room.stoppedBy;
   if (S.phase === 'game' && remStopped && remStopped !== _lastStoppedBy) {
     _lastStoppedBy = remStopped;
     S.stoppedBy    = remStopped;
     stopTimerLocal();
-    if (S.isHost) await collectAndShowScoring();
+
+    // Convidado: desabilita o STOP e mostra aviso
+    if (!S.isHost) {
+      const stopBtn = el('g-stop-btn');
+      if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '⏳ Aguardando...'; }
+      el('g-stop-status').textContent = '🛑 Rodada parada! Aguardando pontuação...';
+    }
+
+    // Host processa (com guard anti-duplo)
+    if (S.isHost && !S._collecting) await collectAndShowScoring();
   }
 }
 
@@ -327,7 +375,7 @@ function renderLobbyPlayers() {
   Object.values(S.players).forEach((p, i) => {
     const initials    = p.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
     const avatarClass = p.spectator ? 'avatar spectator' : i === 0 ? 'avatar red' : 'avatar';
-    const badge = p.host
+    const badge       = p.host
       ? (p.spectator
           ? '<span class="host-badge">Host</span> <span class="spectator-badge">👁️ Espectador</span>'
           : '<span class="host-badge">Host</span>')
@@ -339,8 +387,7 @@ function renderLobbyPlayers() {
         ${badge}
       </div>`;
   });
-  const count = Object.keys(S.players).length;
-  el('lb-status').textContent = `${count} participante(s) na sala`;
+  el('lb-status').textContent = `${Object.keys(S.players).length} participante(s) na sala`;
 }
 
 function renderCatTags() {
@@ -371,15 +418,11 @@ function removeCat(c) {
   pushRoom();
 }
 
-function resetCats() {
-  S.config.cats = [...DEF_CATS];
-  renderCatTags();
-  pushRoom();
-}
+function resetCats() { S.config.cats = [...DEF_CATS]; renderCatTags(); pushRoom(); }
 
 function copyCode() {
   navigator.clipboard.writeText(S.roomCode).catch(() => {});
-  const btn = event.target;
+  const btn = event.currentTarget;
   const orig = btn.textContent;
   btn.textContent = '✅ Copiado!';
   setTimeout(() => { btn.textContent = orig; }, 1800);
@@ -389,39 +432,43 @@ function copyCode() {
 //  INICIAR PARTIDA
 // ══════════════════════════════════════════════════════════════
 async function startGame() {
-  const activePlayers = Object.values(S.players).filter(p => !p.spectator);
-  if (activePlayers.length < 1) {
-    alert('É necessário pelo menos 1 jogador (não espectador) para iniciar.');
-    return;
-  }
+  const actives = Object.values(S.players).filter(p => !p.spectator);
+  if (actives.length < 1) { alert('É necessário pelo menos 1 jogador para iniciar.'); return; }
 
   S.currentRound  = 1;
   S.currentLetter = pickLetter();
   S.usedLetters   = [S.currentLetter];
   S.phase         = 'game';
   S.stoppedBy     = null;
+  S.startedAt     = Date.now();
+  S._collecting   = false;
   _lastStoppedBy  = null;
   S.answers       = {};
   S.scoring       = {};
 
-  activePlayers.forEach(p => {
+  actives.forEach(p => {
     S.answers[p.id] = {};
     S.scoring[p.id] = {};
-    S.config.cats.forEach(c => {
-      S.answers[p.id][c] = '';
-      S.scoring[p.id][c] = false;
-    });
+    S.config.cats.forEach(c => { S.answers[p.id][c] = ''; S.scoring[p.id][c] = false; });
   });
 
   await pushRoom();
   showGamePage();
-  startTimer(); // host sempre roda o timer (mesmo espectador, para controlar o fim)
+  startTimer();
 }
 
 function pickLetter() {
   const avail = ALPHABET.filter(l => !S.usedLetters.includes(l));
   if (!avail.length) return ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
   return avail[Math.floor(Math.random() * avail.length)];
+}
+
+function resetLocalRoundState() {
+  S.answers     = {};
+  S.scoring     = {};
+  S.stoppedBy   = null;
+  S._collecting = false;
+  _lastStoppedBy = null;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -432,21 +479,28 @@ function showGamePage() {
   el('g-letter').textContent = S.currentLetter;
   el('g-round').textContent  = `${S.currentRound}/${S.config.rounds}`;
 
-  const amSpectator = S.isHost && S.isSpectator;
-  el('spectator-banner').style.display = amSpectator ? 'block' : 'none';
+  const amSpec = S.isHost && S.isSpectator;
+  el('spectator-banner').style.display = amSpec ? 'block' : 'none';
   el('g-pause-btn').style.display      = 'inline-flex';
-  el('g-stop-btn').style.display       = amSpectator ? 'none' : 'inline-flex';
 
+  const stopBtn = el('g-stop-btn');
+  stopBtn.style.display = amSpec ? 'none' : 'inline-flex';
+  stopBtn.disabled      = false;
+  stopBtn.textContent   = '🛑 STOP!';
+
+  el('g-stop-status').textContent = '';
+
+  S._collecting = false;
   buildGameTable();
 }
 
 function buildGameTable() {
-  const thead       = el('g-thead');
-  const tbody       = el('g-tbody');
-  const myId        = S.myId;
-  const amSpectator = S.isHost && S.isSpectator;
-  const players     = Object.values(S.players).filter(p => !p.spectator);
-  const cats        = S.config.cats;
+  const thead   = el('g-thead');
+  const tbody   = el('g-tbody');
+  const myId    = S.myId;
+  const amSpec  = S.isHost && S.isSpectator;
+  const players = Object.values(S.players).filter(p => !p.spectator);
+  const cats    = S.config.cats;
 
   let hrow = '<tr><th>Jogador</th>';
   cats.forEach(c => { hrow += `<th class="cat">${c}</th>`; });
@@ -455,9 +509,11 @@ function buildGameTable() {
   tbody.innerHTML = '';
 
   players.forEach(p => {
-    const isMe = (p.id === myId) && !amSpectator;
+    const isMe = (p.id === myId) && !amSpec;
     const tr   = document.createElement('tr');
-    let cells  = `<td class="pname">${p.name}${isMe ? ' <span class="status-pill pill-blue" style="font-size:9px">você</span>' : ''}</td>`;
+    tr.dataset.pid = p.id;
+
+    let cells = `<td class="pname">${p.name}${isMe ? ' <span class="status-pill pill-blue" style="font-size:9px">você</span>' : ''}</td>`;
 
     cats.forEach(c => {
       if (isMe) {
@@ -465,7 +521,13 @@ function buildGameTable() {
         cells += `<td><input class="ans-input" data-pid="${myId}" data-cat="${c}"
                     placeholder="${S.currentLetter}..." maxlength="30" value="${val}" /></td>`;
       } else {
-        cells += '<td><span class="other-ans">✏️ digitando...</span></td>';
+        // Célula para outros — será preenchida pelo updateOtherAnswersUI
+        const val = (S.answers[p.id] && S.answers[p.id][c]) || '';
+        cells += `<td><div class="other-cell" data-pid="${p.id}" data-cat="${c}">${
+          val
+            ? `<span class="other-ans-filled">${val}</span>`
+            : '<span class="other-ans">✏️ digitando...</span>'
+        }</div></td>`;
       }
     });
 
@@ -473,22 +535,47 @@ function buildGameTable() {
     tbody.appendChild(tr);
   });
 
+  // Listeners de input — publica respostas com debounce
   document.querySelectorAll('.ans-input').forEach(inp => {
     inp.addEventListener('input', e => {
       const pid = e.target.dataset.pid, cat = e.target.dataset.cat;
       if (!S.answers[pid]) S.answers[pid] = {};
       S.answers[pid][cat] = e.target.value;
+      scheduleAnswerPush();
     });
   });
 }
 
+// Atualiza apenas as células dos outros jogadores (sem recriar a tabela)
+function updateOtherAnswersUI() {
+  const ap = document.querySelector('.page.active');
+  if (!ap || ap.id !== 'pg-game') return;
+
+  document.querySelectorAll('.other-cell').forEach(cell => {
+    const pid = cell.dataset.pid;
+    const cat = cell.dataset.cat;
+    if (pid === S.myId) return;
+
+    const val = (S.answers[pid] && S.answers[pid][cat]) || '';
+    const cur = cell.querySelector('.other-ans-filled');
+    const curVal = cur ? cur.textContent : '';
+
+    if (val && val !== curVal) {
+      cell.innerHTML = `<span class="other-ans-filled">${val}</span>`;
+    } else if (!val && cur) {
+      cell.innerHTML = '<span class="other-ans">✏️ digitando...</span>';
+    }
+  });
+}
+
 // ══════════════════════════════════════════════════════════════
-//  TIMER
+//  TIMER — sincronizado com o servidor
 // ══════════════════════════════════════════════════════════════
 function startTimer() {
   S.timeLeft = S.config.time;
   S.paused   = false;
-  const btn  = el('g-pause-btn');
+  S._collecting = false;
+  const btn = el('g-pause-btn');
   if (btn) btn.textContent = '⏸ Pausar';
   updateTimerUI();
   if (S.timer) clearInterval(S.timer);
@@ -498,8 +585,28 @@ function startTimer() {
     updateTimerUI();
     if (S.timeLeft <= 0) {
       clearInterval(S.timer); S.timer = null;
-      if (S.isHost) await collectAndShowScoring();
-      else          stopTimerLocal();
+      if (S.isHost && !S._collecting) await collectAndShowScoring();
+      else stopTimerLocal();
+    }
+  }, 1000);
+}
+
+// Convidado sincroniza o timer com base em quando o host iniciou
+function startTimerFromServer(room) {
+  if (!room.startedAt) { startTimer(); return; }
+  const elapsed = Math.floor((Date.now() - room.startedAt) / 1000);
+  S.timeLeft  = Math.max(0, (S.config.time || 90) - elapsed);
+  S.paused    = false;
+  S._collecting = false;
+  updateTimerUI();
+  if (S.timer) clearInterval(S.timer);
+  S.timer = setInterval(async () => {
+    if (S.paused) return;
+    S.timeLeft--;
+    updateTimerUI();
+    if (S.timeLeft <= 0) {
+      clearInterval(S.timer); S.timer = null;
+      stopTimerLocal();
     }
   }, 1000);
 }
@@ -512,7 +619,7 @@ function updateTimerUI() {
   const e = el('g-timer');
   if (!e) return;
   e.textContent = S.timeLeft;
-  e.className = 'timer-num' + (S.timeLeft <= 10 ? ' urgent' : '');
+  e.className   = 'timer-num' + (S.timeLeft <= 10 ? ' urgent' : '');
 }
 
 function togglePause() {
@@ -525,28 +632,46 @@ function togglePause() {
 //  STOP
 // ══════════════════════════════════════════════════════════════
 async function playerStop() {
-  const btn = el('g-stop-btn');
-  btn.disabled = true;
-  el('g-stop-status').textContent = '⏳ Parando a rodada...';
+  const stopBtn = el('g-stop-btn');
+  stopBtn.disabled    = true;
+  stopBtn.textContent = '⏳ Parando...';
+  el('g-stop-status').textContent = '⏳ Rodada parada! Aguardando host processar...';
   stopTimerLocal();
+
+  // Publica as respostas imediatamente (sem debounce)
+  if (_answerPushTimer) { clearTimeout(_answerPushTimer); _answerPushTimer = null; }
+  await pushMyAnswers();
+
+  // Sinaliza STOP para todos
   S.stoppedBy    = S.myId;
   _lastStoppedBy = S.myId;
-  // Publica apenas o stoppedBy para o host capturar via poll
-  await fbUpdate(roomPath(), { stoppedBy: S.myId });
-  if (S.isHost) await collectAndShowScoring();
+  await fbPatch(roomPath(), { stoppedBy: S.myId });
+
+  // Host processa direto
+  if (S.isHost && !S._collecting) await collectAndShowScoring();
 }
 
+// ══════════════════════════════════════════════════════════════
+//  COLETA E PONTUAÇÃO
+// ══════════════════════════════════════════════════════════════
 async function collectAndShowScoring() {
+  if (S._collecting) return;   // guard anti-duplo
+  S._collecting = true;
   stopTimerLocal();
-  // Coleta respostas dos inputs (jogador ativo)
-  document.querySelectorAll('.ans-input').forEach(inp => {
-    const pid = inp.dataset.pid, cat = inp.dataset.cat;
-    if (!S.answers[pid]) S.answers[pid] = {};
-    S.answers[pid][cat] = inp.value.trim();
-  });
 
-  await fbSet(answersPath(), S.answers);
-  initScoring();
+  // Publica últimas respostas do host antes de fechar
+  if (!S.isSpectator) {
+    document.querySelectorAll('.ans-input').forEach(inp => {
+      const pid = inp.dataset.pid, cat = inp.dataset.cat;
+      if (!S.answers[pid]) S.answers[pid] = {};
+      S.answers[pid][cat] = inp.value.trim();
+    });
+    await pushMyAnswers();
+  }
+
+  // Carrega todas as respostas do Firebase
+  await loadRemoteAnswers();   // preenche S.answers e chama initScoring
+
   S.phase = 'scoring';
   await pushRoom();
   showScoringPage();
@@ -554,7 +679,7 @@ async function collectAndShowScoring() {
 
 function initScoring() {
   const letter = S.currentLetter;
-  S.scoring = {};
+  S.scoring    = {};
   Object.values(S.players).filter(p => !p.spectator).forEach(p => {
     S.scoring[p.id] = {};
     S.config.cats.forEach(c => {
@@ -564,19 +689,11 @@ function initScoring() {
   });
 }
 
-// ══════════════════════════════════════════════════════════════
-//  PONTUAÇÃO
-// ══════════════════════════════════════════════════════════════
-async function loadRemoteAnswers() {
-  const remote = await fbGet(answersPath());
-  if (remote) S.answers = remote;
-  initScoring();
-}
-
+// ── Pontuação ──────────────────────────────────────────────────
 function showScoringPage() {
   showPage('pg-scoring');
-  el('sc-title').textContent = `Pontuação — Letra ${S.currentLetter}`;
-  el('sc-host-badge').innerHTML = S.isHost
+  el('sc-title').textContent     = `Pontuação — Letra ${S.currentLetter}`;
+  el('sc-host-badge').innerHTML  = S.isHost
     ? '<span class="status-pill pill-green">Host · você valida</span>' : '';
   el('sc-confirm-btn').style.display = S.isHost ? 'inline-flex' : 'none';
   el('sc-wait-msg').style.display    = S.isHost ? 'none' : 'block';
@@ -622,7 +739,6 @@ function buildScoringTable() {
         cells += `<td><span style="color:var(--gray3);font-size:13px">—</span></td>`;
       }
     });
-
     cells += `<td class="scoring-total" id="tot_${pid}">0</td>`;
     tr.innerHTML = cells;
     tbody.appendChild(tr);
@@ -641,7 +757,6 @@ function toggleValid(pid, cat, btnId) {
 function recalcScoring() {
   const cats    = S.config.cats;
   const players = Object.values(S.players).filter(p => !p.spectator);
-
   players.forEach(p => {
     const pid = p.id;
     let tot   = 0;
@@ -670,8 +785,8 @@ function recalcScoring() {
 }
 
 async function confirmScoring() {
-  const cats    = S.config.cats;
-  const players = Object.values(S.players).filter(p => !p.spectator);
+  const cats     = S.config.cats;
+  const players  = Object.values(S.players).filter(p => !p.spectator);
   const roundPts = {};
 
   players.forEach(p => {
@@ -723,13 +838,12 @@ function computeMetrics(roundPts) {
     const uniqueCount = cats.filter(c => {
       const ans = (S.answers[pid] && S.answers[pid][c]) || '';
       if (!ans || !S.scoring[pid] || !S.scoring[pid][c]) return false;
-      const same = players.filter(op =>
+      return !players.some(op =>
         op.id !== pid &&
         S.answers[op.id] && S.answers[op.id][c] &&
         S.answers[op.id][c].trim().toLowerCase() === ans.trim().toLowerCase() &&
         S.scoring[op.id] && S.scoring[op.id][c]
       );
-      return same.length === 0;
     }).length;
 
     S.metrics[pid].eficacia.push(Math.round((validCount / cats.length) * 100));
@@ -742,19 +856,19 @@ function showMetricsPage() {
   showPage('pg-metrics');
   el('mt-title').textContent = `Resultado da Rodada ${S.currentRound}`;
 
-  const amSpectator   = S.isHost && S.isSpectator;
-  const activePlayers = Object.values(S.players).filter(p => !p.spectator);
+  const amSpec    = S.isHost && S.isSpectator;
+  const actives   = Object.values(S.players).filter(p => !p.spectator);
 
-  if (amSpectator) {
+  if (amSpec) {
     el('mt-player-selector').style.display = 'block';
     const sel = el('mt-player-select');
     sel.innerHTML = '';
-    activePlayers.forEach(p => {
+    actives.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.id; opt.textContent = p.name;
       sel.appendChild(opt);
     });
-    if (activePlayers.length > 0) renderMetricsForPlayer(activePlayers[0].id);
+    if (actives.length > 0) renderMetricsForPlayer(actives[0].id);
   } else {
     el('mt-player-selector').style.display = 'none';
     renderMetricsForPlayer(S.myId);
@@ -766,7 +880,7 @@ function showMetricsPage() {
     ? `Rodada ${S.currentRound} de ${S.config.rounds} — fim da partida!`
     : `Rodada ${S.currentRound} de ${S.config.rounds}`;
   el('mt-next-btn').disabled = !S.isHost;
-  if (!S.isHost) el('mt-next-btn').textContent = 'Aguardando host...';
+  if (!S.isHost) el('mt-next-btn').textContent = '⏳ Aguardando host...';
 }
 
 function renderMetricsForPlayer(pid) {
@@ -788,9 +902,9 @@ function renderMetricsForPlayer(pid) {
   const pr    = m.produtividade[idx] || 0;
   const maxPr = S.config.cats.length * 10;
 
-  setMetric('eficacia',      ef + '%',   ef);
-  setMetric('eficiencia',    ei + '%',   ei);
-  setMetric('produtividade', pr + 'pts', Math.round((pr / maxPr) * 100));
+  setMetric('eficacia',      ef  + '%',   ef);
+  setMetric('eficiencia',    ei  + '%',   ei);
+  setMetric('produtividade', pr  + 'pts', Math.round((pr / maxPr) * 100));
 
   const players = Object.values(S.players).filter(p => !p.spectator);
   let rows = '';
@@ -816,7 +930,7 @@ function renderMetricsForPlayer(pid) {
       <td style="font-weight:600">${c}</td>
       <td>${ans || '—'}</td>
       <td style="text-align:center">${pill}</td>
-      <td>${pts > 0 ? pts + 'pts' : '—'}</td>
+      <td style="text-align:right">${pts > 0 ? pts + 'pts' : '—'}</td>
     </tr>`;
   });
 
@@ -839,7 +953,6 @@ function setMetric(name, val, pct) {
 
 async function goNextRound() {
   if (!S.isHost) return;
-
   if (S.currentRound >= S.config.rounds) {
     S.phase = 'results';
     await pushRoom();
@@ -850,19 +963,18 @@ async function goNextRound() {
   S.currentRound++;
   S.currentLetter = pickLetter();
   S.usedLetters.push(S.currentLetter);
-  S.phase        = 'game';
-  S.stoppedBy    = null;
+  S.phase       = 'game';
+  S.stoppedBy   = null;
+  S.startedAt   = Date.now();
+  S._collecting = false;
   _lastStoppedBy = null;
-  S.answers      = {};
-  S.scoring      = {};
+  S.answers     = {};
+  S.scoring     = {};
 
   Object.values(S.players).filter(p => !p.spectator).forEach(p => {
     S.answers[p.id] = {};
     S.scoring[p.id] = {};
-    S.config.cats.forEach(c => {
-      S.answers[p.id][c] = '';
-      S.scoring[p.id][c] = false;
-    });
+    S.config.cats.forEach(c => { S.answers[p.id][c] = ''; S.scoring[p.id][c] = false; });
   });
 
   await pushRoom();
@@ -910,9 +1022,7 @@ function buildPodium(sorted, totals) {
     wrap.innerHTML += `
       <div class="podium-col" role="listitem">
         <div style="font-size:24px;margin-bottom:4px">${medal}</div>
-        <div class="podium-bar" style="background:${c};height:${h}px">
-          ${totals[p.id]?.pts || 0}
-        </div>
+        <div class="podium-bar" style="background:${c};height:${h}px">${totals[p.id]?.pts || 0}</div>
         <div class="podium-name">${p.name}</div>
         <div class="podium-pts">pts totais</div>
       </div>`;
@@ -938,13 +1048,11 @@ function buildRankTable(sorted, totals) {
 function buildTripleRank(players) {
   const wrap = el('res-triple');
   wrap.innerHTML = '';
-  const metrics = [
+  [
     { key: 'eficacia',      label: 'Eficácia',      unit: '%',   cls: 'efc' },
     { key: 'eficiencia',    label: 'Eficiência',    unit: '%',   cls: 'efi' },
     { key: 'produtividade', label: 'Produtividade', unit: 'pts', cls: 'prd' },
-  ];
-
-  metrics.forEach(m => {
+  ].forEach(m => {
     const ranked = players.map(p => {
       const md   = S.metrics[p.id];
       const vals = md ? md[m.key] : [];
@@ -952,19 +1060,15 @@ function buildTripleRank(players) {
       return { name: p.name, val: avg };
     }).sort((a, b) => b.val - a.val);
 
-    let rows = '';
-    ranked.forEach((r, i) => {
-      rows += `<div class="triple-row">
-        <div class="triple-pos">${['🥇','🥈','🥉'][i] || (i+1)+'°'}</div>
-        <div class="triple-name">${r.name}</div>
-        <div class="triple-val">${r.val}${m.unit}</div>
-      </div>`;
-    });
-
     wrap.innerHTML += `
       <div class="triple-card ${m.cls}">
         <div class="triple-head ${m.cls}">${m.label}</div>
-        ${rows}
+        ${ranked.map((r, i) => `
+          <div class="triple-row">
+            <div class="triple-pos">${['🥇','🥈','🥉'][i] || (i+1)+'°'}</div>
+            <div class="triple-name">${r.name}</div>
+            <div class="triple-val">${r.val}${m.unit}</div>
+          </div>`).join('')}
       </div>`;
   });
 }
@@ -974,28 +1078,41 @@ function buildTripleRank(players) {
 // ══════════════════════════════════════════════════════════════
 async function playAgain() {
   if (!S.isHost) { alert('Apenas o host pode reiniciar.'); return; }
-  S.currentRound = 0;
-  S.usedLetters  = [];
-  S.roundScores  = {};
-  S.metrics      = {};
-  S.phase        = 'lobby';
-  S.answers      = {};
-  S.scoring      = {};
-  S.stoppedBy    = null;
-  _lastStoppedBy = null;
-  _lastPhase     = '';
-  _lastRound     = -1;
-
+  S.currentRound = 0; S.usedLetters  = []; S.roundScores  = {}; S.metrics = {};
+  S.phase = 'lobby';  S.answers = {};      S.scoring = {};
+  S.stoppedBy = null; S.startedAt = null;  S._collecting = false;
+  _lastStoppedBy = null; _lastPhase = ''; _lastRound = -1;
   await pushRoom();
   showLobby();
   startPoll();
 }
 
 function goHome() {
-  clearInterval(S.pollId);
-  S.pollId = null;
+  clearInterval(S.pollId); S.pollId = null;
   location.reload();
 }
+
+// ══════════════════════════════════════════════════════════════
+//  CSS extra — estilo para respostas dos outros aparecendo
+// ══════════════════════════════════════════════════════════════
+(function injectStyles() {
+  const style = document.createElement('style');
+  style.textContent = `
+    .other-ans-filled {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--dark, #1C1F2E);
+      padding: 5px 7px;
+      background: #eef5ff;
+      border-radius: 4px;
+      border-left: 3px solid #003087;
+      animation: fadeIn .3s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+  `;
+  document.head.appendChild(style);
+})();
 
 // ══════════════════════════════════════════════════════════════
 //  INICIALIZAÇÃO
