@@ -1034,7 +1034,7 @@ function showResultsPage() {
 function buildPodium(sorted, totals) {
   const wrap   = el('res-podium');
   wrap.innerHTML = '';
-  const order  = sorted.length >= 3 ? [sorted[1], sorted[0], sorted[2]] : sorted;
+  const order  = sorted.length >= 3 ? [sorted[0], sorted[1], sorted[2]] : sorted;
   const heights = [150, 110, 85];
   const colors  = ['#C8102E', '#003087', '#E8A020'];
   const medals  = ['🥇','🥈', '🥉'];
