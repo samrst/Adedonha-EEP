@@ -10,7 +10,7 @@
 //  Substitua pela URL do seu projeto Firebase.
 //  Formato: https://SEU-PROJETO-default-rtdb.firebaseio.com
 // ══════════════════════════════════════════════════════════════
-const FIREBASE_URL = 'https://adedonha-senai-default-rtdb.firebaseio.com';
+const FIREBASE_URL = 'https://adedonha-eep-default-rtdb.firebaseio.com/';
 
 // ── REST helpers ──────────────────────────────────────────────
 async function fbGet(path) {
